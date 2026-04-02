@@ -1,11 +1,19 @@
 name: 每日股票分析
 
 on:
-  # 定时触发 - 工作日北京时间 09:00 / 11:50 / 14:30
+  # 定时触发
+  # A股时段按北京时间固定触发
+  # 美股时段使用夏令时/冬令时双候选 cron，再由 workflow 内部按纽约时间过滤到目标 3 个时点
   schedule:
-    - cron: '0 1 * * 1-5'      # 周一到周五 UTC 01:00 = 北京时间 09:00
+    - cron: '50 1 * * 1-5'     # 周一到周五 UTC 01:50 = 北京时间 09:50
     - cron: '50 3 * * 1-5'     # 周一到周五 UTC 03:50 = 北京时间 11:50
     - cron: '30 6 * * 1-5'     # 周一到周五 UTC 06:30 = 北京时间 14:30
+    - cron: '30 14 * * 1-5'    # 美股开盘后一小时（夏令时候选）：UTC 14:30 = 纽约 10:30 EDT
+    - cron: '30 15 * * 1-5'    # 美股开盘后一小时（冬令时候选）：UTC 15:30 = 纽约 10:30 EST
+    - cron: '0 16 * * 1-5'     # 美股午间（夏令时候选）：UTC 16:00 = 纽约 12:00 EDT
+    - cron: '0 17 * * 1-5'     # 美股午间（冬令时候选）：UTC 17:00 = 纽约 12:00 EST
+    - cron: '30 19 * * 1-5'    # 美股收盘前半小时（夏令时候选）：UTC 19:30 = 纽约 15:30 EDT
+    - cron: '30 20 * * 1-5'    # 美股收盘前半小时（冬令时候选）：UTC 20:30 = 纽约 15:30 EST
   
   # 手动触发
   workflow_dispatch:
@@ -39,26 +47,80 @@ jobs:
     steps:
       - name: 随机延迟（避免固定时间访问）
         run: sleep $((RANDOM % 60))  # 随机延迟0-60秒启动
+
+      - name: 校验定时窗口
+        id: schedule_window
+        if: ${{ github.event_name == 'schedule' }}
+        run: |
+          BJT_NOW=$(TZ='Asia/Shanghai' date '+%H:%M')
+          NY_NOW=$(TZ='America/New_York' date '+%H:%M')
+          SHOULD_RUN=false
+          SLOT_LABEL=""
+
+          case "$BJT_NOW" in
+            09:50)
+              SHOULD_RUN=true
+              SLOT_LABEL="A股上午时段 09:50"
+              ;;
+            11:50)
+              SHOULD_RUN=true
+              SLOT_LABEL="A股午间时段 11:50"
+              ;;
+            14:30)
+              SHOULD_RUN=true
+              SLOT_LABEL="A股下午时段 14:30"
+              ;;
+          esac
+
+          case "$NY_NOW" in
+            10:30)
+              SHOULD_RUN=true
+              SLOT_LABEL="美股开盘后一小时 10:30 ET"
+              ;;
+            12:00)
+              SHOULD_RUN=true
+              SLOT_LABEL="美股午间 12:00 ET"
+              ;;
+            15:30)
+              SHOULD_RUN=true
+              SLOT_LABEL="美股收盘前半小时 15:30 ET"
+              ;;
+          esac
+
+          echo "北京时间: $BJT_NOW"
+          echo "纽约时间: $NY_NOW"
+          echo "目标窗口: ${SLOT_LABEL:-未命中}"
+          echo "should_run=$SHOULD_RUN" >> "$GITHUB_OUTPUT"
+          echo "slot_label=$SLOT_LABEL" >> "$GITHUB_OUTPUT"
+
+          if [ "$SHOULD_RUN" != "true" ]; then
+            echo "当前候选 cron 仅用于兼容美股夏令时/冬令时，本次不执行分析。"
+          fi
       
       - name: 检出代码
+        if: ${{ github.event_name != 'schedule' || steps.schedule_window.outputs.should_run == 'true' }}
         uses: actions/checkout@v5
       
       - name: 设置 Python 环境
+        if: ${{ github.event_name != 'schedule' || steps.schedule_window.outputs.should_run == 'true' }}
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
       
       - name: 安装依赖
+        if: ${{ github.event_name != 'schedule' || steps.schedule_window.outputs.should_run == 'true' }}
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
       
       - name: 创建必要目录
+        if: ${{ github.event_name != 'schedule' || steps.schedule_window.outputs.should_run == 'true' }}
         run: |
           mkdir -p data logs reports
       
       - name: 执行股票分析
+        if: ${{ github.event_name != 'schedule' || steps.schedule_window.outputs.should_run == 'true' }}
         env:
           # ==========================================
           # AI 配置
@@ -269,7 +331,7 @@ jobs:
       
       - name: 上传分析报告
         uses: actions/upload-artifact@v6
-        if: always()
+        if: ${{ always() && (github.event_name != 'schedule' || steps.schedule_window.outputs.should_run == 'true') }}
         with:
           name: analysis-reports-${{ github.run_number }}
           path: |
@@ -280,6 +342,15 @@ jobs:
       - name: 显示运行结果
         if: always()
         run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ steps.schedule_window.outputs.should_run }}" != "true" ]; then
+            echo ""
+            echo "=========================================="
+            echo "⏭️ 本次未执行分析"
+            echo "=========================================="
+            echo "候选 cron 仅用于兼容美股夏令时/冬令时切换，当前时间不在目标六个推送窗口内。"
+            exit 0
+          fi
+
           echo ""
           echo "=========================================="
           echo "📊 分析完成"
