@@ -26,6 +26,15 @@ class TestMarketStrategyBlueprint(unittest.TestCase):
         self.assertIn("Risk-on", block)
         self.assertIn("Macro & Flows", block)
 
+    def test_us_fallback_markdown_is_localized_for_push(self):
+        blueprint = get_market_strategy_blueprint("us")
+        block = blueprint.to_markdown_block()
+
+        self.assertIn("### 六、策略框架", block)
+        self.assertIn("趋势阶段", block)
+        self.assertIn("宏观与资金流", block)
+        self.assertNotIn("VI. Strategy Framework", block)
+
 
 class TestMarketAnalyzerStrategyPrompt(unittest.TestCase):
     """Validate strategy section is injected into prompt/report."""

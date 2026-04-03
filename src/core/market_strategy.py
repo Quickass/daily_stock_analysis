@@ -25,6 +25,20 @@ class MarketStrategyBlueprint:
     dimensions: List[StrategyDimension]
     action_framework: List[str]
 
+    def _fallback_markdown_labels(self) -> tuple[str, List[tuple[str, str]]]:
+        """Return localized labels for template fallback report blocks."""
+        if self.region != "us":
+            dims = [(dim.name, dim.objective) for dim in self.dimensions]
+            return "### 六、策略框架", dims
+
+        us_labels = {
+            "Trend Regime": ("趋势阶段", "判断当前市场处于动量延续、区间震荡还是风险偏好收缩阶段。"),
+            "Macro & Flows": ("宏观与资金流", "把政策、利率与美元叙事映射到美股风险偏好变化。"),
+            "Sector Themes": ("板块主线", "识别持续强势的领涨方向和需要规避的弱势板块。"),
+        }
+        dims = [us_labels.get(dim.name, (dim.name, dim.objective)) for dim in self.dimensions]
+        return "### 六、策略框架", dims
+
     def to_prompt_block(self) -> str:
         """Render blueprint as prompt instructions."""
         principles_text = "\n".join([f"- {item}" for item in self.principles])
@@ -46,8 +60,8 @@ class MarketStrategyBlueprint:
 
     def to_markdown_block(self) -> str:
         """Render blueprint as markdown section for template fallback report."""
-        dims = "\n".join([f"- **{dim.name}**: {dim.objective}" for dim in self.dimensions])
-        section_title = "### 六、策略框架" if self.region == "cn" else "### VI. Strategy Framework"
+        section_title, localized_dims = self._fallback_markdown_labels()
+        dims = "\n".join([f"- **{name}**: {objective}" for name, objective in localized_dims])
         return f"{section_title}\n{dims}\n"
 
 
